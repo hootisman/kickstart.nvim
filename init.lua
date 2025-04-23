@@ -431,6 +431,10 @@ require('lazy').setup({
         --     i = { ['<c-enter>'] = 'to_fuzzy_refine' },
         --   },
         -- },
+        defaults = {
+          initial_mode = 'normal',
+          path_display = { 'smart' },
+        },
         -- pickers = {}
         extensions = {
           ['ui-select'] = {
@@ -567,9 +571,90 @@ require('lazy').setup({
           -- Find references for the word under your cursor.
           map('gr', require('telescope.builtin').lsp_references, '[G]oto [R]eferences')
 
+          -- START
+
+          local builtin = require 'telescope.builtin'
+          local pickers = require 'telescope.pickers'
+          local finders = require 'telescope.finders'
+          local conf = require('telescope.config').values
+          local entry_display = require 'telescope.pickers.entry_display'
+          local make_entry = require 'telescope.make_entry'
+
+          local function trim_path(path)
+            -- Trim or shorten path logic here
+            -- Shorten JDT virtual paths
+            path = path:gsub('jdt://contents/', '') -- remove prefix
+            path = path:gsub('.*%.jar/', '') -- separate JAR from class
+            path = path:gsub('net%.neoforged%.', 'n.n/') -- example: abbreviate package
+            path = path:gsub('net%.minecraftforge%.', 'n.m/') -- another example
+
+            path = path:gsub('class.*', 'class') -- another example
+            return path
+          end
+
+          local function custom_lsp_implementations(opts)
+            opts = opts or {}
+            opts.entry_maker = function(entry)
+              local displayer = entry_display.create {
+                separator = ' ',
+                items = {
+                  { width = 80 }, -- shortened path
+                  { remaining = true },
+                },
+              }
+
+              local path = vim.uri_to_fname(entry.uri)
+              local trimmed = trim_path(path)
+
+              return {
+                value = entry,
+                ordinal = path,
+                display = function()
+                  return displayer {
+                    trimmed,
+                    entry.text or '',
+                  }
+                end,
+                filename = path,
+                lnum = (entry.range and entry.range.start.line + 1) or 0,
+                col = (entry.range and entry.range.start.character + 1) or 0,
+              }
+            end
+
+            vim.lsp.buf_request(0, 'textDocument/implementation', vim.lsp.util.make_position_params(), function(err, result, ctx, _)
+              if err then
+                vim.notify('LSP error: ' .. err.message, vim.log.levels.ERROR)
+                return
+              end
+              if not result then
+                vim.notify('No implementations found', vim.log.levels.INFO)
+                return
+              end
+
+              local locations = vim.tbl_islist(result) and result or { result }
+              pickers
+                .new(opts, {
+                  prompt_title = 'LSP Implementations',
+                  finder = finders.new_table {
+                    results = locations,
+                    entry_maker = opts.entry_maker,
+                  },
+                  previewer = conf.qflist_previewer(opts),
+                  sorter = conf.generic_sorter(opts),
+                })
+                :find()
+            end)
+          end
+
+          -- END
+          local impl = function()
+            -- require('telescope.builtin').lsp_implementations { trim_text = true, show_line = false }
+            require('telescope.builtin').lsp_implementations {}
+          end
           -- Jump to the implementation of the word under your cursor.
           --  Useful when your language has ways of declaring types without an actual implementation.
-          map('gI', require('telescope.builtin').lsp_implementations, '[G]oto [I]mplementation')
+          -- map('gI', impl, '[G]oto [I]mplementation')
+          map('gI', custom_lsp_implementations, '[G]oto [I]mplementation')
 
           -- Jump to the type of the word under your cursor.
           --  Useful when you're not sure what type a variable is and you want to see
@@ -580,16 +665,32 @@ require('lazy').setup({
           --  Symbols are things like variables, functions, types, etc.
           map('<leader>ds', require('telescope.builtin').lsp_document_symbols, '[D]ocument [S]ymbols')
 
-          -- local work_sym = function()
-          --   require('telescope.builtin').lsp_workspace_symbols { symbols = { 'class' } }
-          -- end
+          local work_sym = function()
+            require('telescope.builtin').lsp_dynamic_workspace_symbols {
+              -- prompt_prefix = ' ',
+              -- selection_caret = ' ',
+              -- path_display = { 'shorten' },
+              -- dynamic_preview_title = true,
+              -- winblend = 10,
+              -- sorting_strategy = 'ascending',
+              -- layout_strategy = 'vertical',
+              -- layout_config = {
+              --   prompt_position = 'bottom',
+              --   height = 0.95,
+              -- },
+              fname_width = 0.5,
+              symbol_width = 0.4,
+              symbol_type_width = 0.1,
+            }
+          end
           -- Fuzzy find all the symbols in your current workspace.
           --  Similar to document symbols, except searches over your entire project.
-          -- map('<leader>ws', require('telescope.builtin').lsp_workspace_symbols, '[W]orkspace [S]ymbols')
           -- see fix: https://neovim.discourse.group/t/duplicate-jdtls-attachement/4445/3
           -- Basically, mason-lspconfig makes another jdtls server. disable it
-          map('<leader>ws', require('telescope.builtin').lsp_dynamic_workspace_symbols, '[W]orkspace [S]ymbols')
-          -- map('<leader>ws', work_sym, '[W]orkspace [S]ymbols')
+          --
+          -- map('<leader>ws', require('telescope.builtin').lsp_dynamic_workspace_symbols, '[W]orkspace [S]ymbols')
+          map('<leader>ws', work_sym, '[W]orkspace [S]ymbols')
+
           -- Rename the variable under your cursor.
           --  Most Language Servers support renaming across files, etc.
           map('<leader>rn', vim.lsp.buf.rename, '[R]e[n]ame')
